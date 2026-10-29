@@ -1,0 +1,459 @@
+\documentclass[aspectratio=169,11pt,professionalfonts]{ctexbeamer}
+
+\usetheme{default}
+\usepackage{booktabs}
+\usepackage{listings}
+
+\definecolor{navy}{HTML}{0E2A47}
+\definecolor{accent}{HTML}{1F6AA5}
+\definecolor{teal}{HTML}{0E7C66}
+\definecolor{codebg}{HTML}{F4F7FB}
+\definecolor{codeframe}{HTML}{D5DDE8}
+
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{structure}{fg=accent}
+\setbeamercolor{frametitle}{fg=white,bg=navy}
+\setbeamercolor{author in head/foot}{fg=white,bg=navy}
+\setbeamercolor{date in head/foot}{fg=navy,bg=accent!18}
+\setbeamercolor{block title}{fg=white,bg=navy}
+\setbeamercolor{block body}{fg=black,bg=navy!6}
+\setbeamerfont{frametitle}{size=\large,series=\bfseries}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{blocks}[rounded]
+\setbeamertemplate{itemize item}{\color{accent}\raise1.2pt\hbox{\small$\blacksquare$}}
+\setbeamertemplate{frametitle}{%
+  \nointerlineskip
+  \begin{beamercolorbox}[wd=\paperwidth,ht=3.1ex,dp=1.35ex,leftskip=1.05em]{frametitle}%
+    \usebeamerfont{frametitle}\insertframetitle
+  \end{beamercolorbox}%
+}
+\setbeamertemplate{footline}{%
+  \leavevmode
+  \hbox{%
+    \begin{beamercolorbox}[wd=.72\paperwidth,ht=2.5ex,dp=1.05ex,leftskip=1em]{author in head/foot}%
+      带 Token 鉴权的迷你 REST API%
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.28\paperwidth,ht=2.5ex,dp=1.05ex,rightskip=1em,right]{date in head/foot}%
+      \insertframenumber{} / \inserttotalframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\lstdefinestyle{snippet}{
+  language=C,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\bfseries\color{accent},
+  commentstyle=\itshape\color{black!45},
+  stringstyle=\color{teal},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{codeframe},
+  backgroundcolor=\color{codebg},
+  xleftmargin=0.45em,
+  framexleftmargin=0.45em,
+  aboveskip=0.35em,
+  belowskip=0.15em
+}
+\lstdefinestyle{plain}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{codeframe},
+  backgroundcolor=\color{codebg},
+  xleftmargin=0.45em,
+  framexleftmargin=0.45em,
+  aboveskip=0.35em,
+  belowskip=0.15em
+}
+
+\title{带 Token 鉴权的迷你 REST API}
+\author{网络编程课程设计}
+\date{2026}
+
+% 需要把讲稿打在副屏或下一页时，取消下一行注释后重新编译。
+% \setbeameroption{show notes on second screen=right}
+
+\begin{document}
+
+{
+\setbeamercolor{background canvas}{bg=navy}
+\setbeamercolor{normal text}{fg=white}
+\begin{frame}[plain]
+\vspace{1.55cm}
+{\color{white}\LARGE\bfseries 带 Token 鉴权的迷你 REST API\par}
+\vspace{0.55em}
+{\color{white!88}\large 用 socket 写一个能登录、能留言的 HTTP 服务\par}
+\vfill
+{\color{white!78}网络编程课程设计\par}
+\vspace{0.35em}
+{\color{white!60}\small C11 \quad POSIX socket \quad 2026\par}
+\vspace{0.6cm}
+\end{frame}
+}
+\note{开场用一句话把范围说清楚：不使用现成 HTTP 库，练的是连接、字节流和多进程。后面的演示就是登录、发一条留言、再把列表读回来。}
+
+\begin{frame}{今天讲四件事}
+\begin{enumerate}
+  \item 服务要完成什么
+  \item 一个连接怎么接进来，一条请求怎么切出来
+  \item token 和留言放在哪，为什么不能放在普通变量里
+  \item 用三条 curl 把 Week A 到 Week C 跑一遍
+\end{enumerate}
+\vspace{0.8em}
+现场顺序也是这四步：先看进程模型，再看报文边界，最后开两个终端演示。
+\end{frame}
+\note{目录不要展开讲。告诉老师这四块对应实验里的 socket、read 到空行、以及 fork 之后的状态共享。}
+
+\begin{frame}{课设要交的最小功能}
+\begin{itemize}
+  \item \texttt{POST /api/login}：用户名和密码写死三个账号，成功就返回一枚 token
+  \item \texttt{GET /api/messages}：请求头里带 \texttt{Authorization: Bearer <token>}，返回留言列表
+  \item \texttt{POST /api/messages}：同样要 token，把一条留言存起来，返回 201
+  \item 没带 token，或者 token 不对，返回 401
+\end{itemize}
+\vspace{0.7em}
+传输层自己做：\texttt{socket}、\texttt{bind}、\texttt{listen}、\texttt{accept}，一个连接一个进程。\\
+不引入 HTTP 库，也不做网页。
+\end{frame}
+\note{把三条接口念完就可以。强调 401 是鉴权失败，不是路径不存在。路径不存在是 404，后面状态码那页会分开。}
+
+\begin{frame}{接口和账号}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.56\textwidth}
+{\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+方法 & 路径 & 作用 \\
+\midrule
+GET & \texttt{/health} & 打通读写 \\
+GET & \texttt{/api/ping} & 心跳，加分 \\
+POST & \texttt{/api/login} & 校验账号，发 token \\
+GET & \texttt{/api/messages} & 读留言，要 token \\
+POST & \texttt{/api/messages} & 写留言，201 \\
+\bottomrule
+\end{tabular}
+}
+\end{column}
+\begin{column}{0.40\textwidth}
+\begin{block}{三个写死的账号}
+alice / alice123\\
+bob / bob123\\
+carol / carol123
+\end{block}
+\vspace{0.4em}
+{\small 留言板是全局的。token 用来证明你是谁，作者名从 token 查，不从 body 里取。}
+\end{column}
+\end{columns}
+\end{frame}
+\note{账号是课堂演示用的明文密码，重启进程后 token 和留言都会清空。如果被问到安全性，直接说这是课设边界，没有做哈希，也没有做 TLS。}
+
+\begin{frame}{进程和数据放在哪}
+\begin{center}
+\setlength{\fboxsep}{6pt}
+\fcolorbox{navy}{navy!7}{\begin{minipage}[c][1.15cm][c]{2.15cm}\centering 客户端\\{\scriptsize curl}\end{minipage}}
+\hspace{0.35em}{\color{accent}$\rightarrow$}\hspace{0.35em}
+\fcolorbox{navy}{navy!7}{\begin{minipage}[c][1.15cm][c]{2.35cm}\centering 父进程\\{\scriptsize accept / fork}\end{minipage}}
+\hspace{0.35em}{\color{accent}$\rightarrow$}\hspace{0.35em}
+\fcolorbox{navy}{accent!10}{\begin{minipage}[c][1.15cm][c]{2.45cm}\centering 子进程\\{\scriptsize 读请求，写响应}\end{minipage}}
+\hspace{0.35em}{\color{accent}$\rightarrow$}\hspace{0.35em}
+\fcolorbox{navy}{teal!12}{\begin{minipage}[c][1.15cm][c]{2.25cm}\centering 共享内存\\{\scriptsize token 表\\留言数组}\end{minipage}}
+\end{center}
+\vspace{0.45em}
+父进程只负责接入和回收子进程。\\
+token 和留言若放在普通全局变量里，\texttt{fork} 之后每个子进程改的是自己的副本。
+\end{frame}
+\note{这张图是全场的地图。后面每讲一块，就指回这张图：左边是字节流，右边是共享状态。父进程不解析 HTTP。}
+
+\begin{frame}{代码地图}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.48\textwidth}
+{\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+文件 & 负责 \\
+\midrule
+\texttt{server.c} & 监听、fork、路由 \\
+\texttt{http.c} & 读满一条请求，写响应 \\
+\texttt{json.c} & 取一层字符串字段 \\
+\texttt{auth.c} & 账号和 token 表 \\
+\texttt{store.c} & 留言循环数组 \\
+\texttt{state.c} & 共享内存和锁 \\
+\bottomrule
+\end{tabular}
+}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{block}{编译和演示}
+{\small
+\texttt{make}\\
+\texttt{./bin/restapi 8080}\\
+\texttt{bash scripts/demo.sh}
+}
+\end{block}
+\vspace{0.35em}
+{\small 演示脚本先跑课设要求的三条 curl，再检查 401、伪造作者和两个客户端同时写。}
+\end{column}
+\end{columns}
+\end{frame}
+\note{如果老师问文件为什么拆开：socket 循环、报文切割、token 表是三件不同的事，答辩时可以分别指给老师看。入口只有 server.c 的 main。}
+
+\begin{frame}{一次请求的八步}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.48\textwidth}
+\begin{enumerate}
+  \item 父进程 \texttt{accept} 得到连接
+  \item \texttt{fork}：子进程关监听套接字，父进程关连接
+  \item \texttt{read}，直到出现空行
+  \item 按 \texttt{Content-Length} 把 body 读满
+\end{enumerate}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{enumerate}
+  \setcounter{enumi}{4}
+  \item 看第一行的方法和路径
+  \item 需要保护的接口去查 token 表
+  \item 按固定模板写回 JSON
+  \item 关掉连接，子进程结束
+\end{enumerate}
+\end{column}
+\end{columns}
+\vspace{0.6em}
+一个连接只处理一个请求。处理完子进程就退出，所以父进程必须负责回收。
+\end{frame}
+\note{八步可以顺着讲，不要在每一步停太久。第 3 步和第 4 步是字节流，第 6 步是鉴权，第 2 步和第 8 步是进程。这三句是这页的收束。}
+
+\begin{frame}[fragile]{一个连接一个进程}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.46\textwidth}
+\begin{lstlisting}[style=snippet]
+pid = fork();
+if (pid == 0) {
+    close(listen_fd);
+    set_timeouts(conn);
+    handle_client(conn, state);
+    close(conn);
+    _exit(0);
+}
+close(conn);
+\end{lstlisting}
+{\scriptsize 主干在 \texttt{server.c}。\texttt{fork} 前后会先挡住信号。}
+\end{column}
+\begin{column}{0.50\textwidth}
+{\footnotesize
+\begin{itemize}
+  \item 父进程堵在 \texttt{accept}，轮不到 \texttt{waitpid}
+  \item \texttt{SIGCHLD} 里回收，避免僵尸进程
+  \item \texttt{SA\_RESTART} 让回收不打断 \texttt{accept}
+  \item 子进程用 \texttt{\_exit}，不重复做清理
+  \item 忽略 \texttt{SIGPIPE}，对端断开不会把子进程打死
+\end{itemize}
+}
+\end{column}
+\end{columns}
+\end{frame}
+\note{这里最容易被问的是僵尸进程。回答：子进程先退出，父进程还阻塞在 accept，如果不在 SIGCHLD 里回收，ps 里会看到 Z。SA\_RESTART 是为了回收动作不要把正在等的 accept 变成 EINTR。}
+
+\begin{frame}[fragile]{TCP 没有消息边界}
+\begin{center}
+\setlength{\fboxsep}{5pt}
+\fcolorbox{navy}{navy!8}{\begin{minipage}[c][0.72cm][c]{3.8cm}\centering 请求行和头部\end{minipage}}%
+\fcolorbox{navy}{accent!18}{\begin{minipage}[c][0.72cm][c]{2.1cm}\centering 空行\end{minipage}}%
+\fcolorbox{navy}{teal!16}{\begin{minipage}[c][0.72cm][c]{4.3cm}\centering body\end{minipage}}
+\end{center}
+\vspace{0.15em}
+先读到 \texttt{\textbackslash r\textbackslash n\textbackslash r\textbackslash n}，再读 \texttt{Content-Length} 个字节。两次 \texttt{read} 可能把头部从中间切开，也可能把头和 body 粘在同一次返回里。
+\begin{lstlisting}[style=snippet]
+sep = strstr(buf, "\r\n\r\n");
+need = header_end + 4 + content_length;
+while (len < need) {
+    n = read(fd, buf + len, cap - len);
+    len += (size_t)n;
+}
+\end{lstlisting}
+\vspace{-0.2em}
+{\scriptsize 上面是边界判断的形状，完整循环在 \texttt{http.c}。不支持分块传输。两份 \texttt{Content-Length} 直接 400。}
+\end{frame}
+\note{用一个具体例子：第一次 read 可能只拿到 POST /api 这几个字节。所以不能读一次就解析。空行表示头结束，Content-Length 表示 body 还有多少字节。这就是我们自己定的消息边界。}
+
+\begin{frame}[fragile]{响应模板和状态码}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.50\textwidth}
+\begin{lstlisting}[style=plain]
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: N
+Connection: close
+
+{"ok":true}
+\end{lstlisting}
+{\scriptsize 课设模板是前三行加空行加 JSON。\\多写 \texttt{Connection: close}，因为 HTTP/1.1 默认还会再等下一个响应。}
+\end{column}
+\begin{column}{0.46\textwidth}
+{\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+状态码 & 何时 \\
+\midrule
+200 & 登录、读取、health、ping \\
+201 & 留言已写入 \\
+400 & JSON 或请求不完整 \\
+401 & 没 token、token 错、密码错 \\
+404 & 没有这个路径 \\
+405 & 路径对，方法不对 \\
+408 & 读请求超时 \\
+413 & 头部或 body 超长 \\
+\bottomrule
+\end{tabular}
+}
+\end{column}
+\end{columns}
+\end{frame}
+\note{401 和 403 的差别可以主动说：401 是还没证明身份。这个服务没有已登录但权限不够的情况，所以不用 403。201 只用于创建留言，登录成功仍是 200。}
+
+\begin{frame}[fragile]{token 怎么签发、怎么核对}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.52\textwidth}
+\begin{lstlisting}[style=snippet]
+seed = (unsigned)time(NULL)
+     ^ (unsigned)getpid()
+     ^ (unsigned)clock() ^ salt;
+srand(seed);
+sprintf(out, "tk_%08x%08x",
+        (unsigned)rand() ^ (unsigned)getpid(),
+        (unsigned)rand() ^ salt);
+\end{lstlisting}
+\end{column}
+\begin{column}{0.44\textwidth}
+\begin{enumerate}
+  \item 账号密码和表里的三项做比较
+  \item \texttt{sprintf} 出 16 位十六进制串
+  \item 写入共享内存里的 token 表
+  \item 之后用 \texttt{Bearer} 后面的串查表
+\end{enumerate}
+\end{column}
+\end{columns}
+\vspace{0.25em}
+{\small \texttt{fork} 会复制 \texttt{rand} 的状态。不按 pid 重新播种的话，两个子进程可能发出同一枚 token。\\
+密码错误、用户不存在，都返回同一句「用户名或密码错误」。}
+\end{frame}
+\note{指着 sprintf 说这就是课设要求的随机串。salt 是极小概率撞车时再搅一次。token 表最多 32 枚，满了返回 503。没有做注销，进程退出表就没了。}
+
+\begin{frame}[fragile]{为什么必须用共享内存}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.46\textwidth}
+\begin{block}{只用全局变量会怎样}
+{\small 登录写在子进程自己的数组里。下一个连接是另一个进程，查的是另一份表，刚发的 token 一定无效。留言同理。}
+\end{block}
+\vspace{0.35em}
+\begin{block}{崩溃时锁不能永远占着}
+{\small 子进程如果死在持锁期间，普通互斥锁会把整张表锁死。这里用了可恢复的进程间锁，下一个加锁的人把锁收回来。}
+\end{block}
+\end{column}
+\begin{column}{0.50\textwidth}
+\begin{lstlisting}[style=snippet]
+st = mmap(NULL, sizeof(*st),
+    PROT_READ | PROT_WRITE,
+    MAP_SHARED | MAP_ANONYMOUS,
+    -1, 0);
+pthread_mutexattr_setpshared(
+    &attr, PTHREAD_PROCESS_SHARED);
+pthread_mutexattr_setrobust(
+    &attr, PTHREAD_MUTEX_ROBUST);
+\end{lstlisting}
+{\scriptsize 映射在 \texttt{fork} 之前做。子进程继承同一块共享页，手里的指针仍然有效。}
+\end{column}
+\end{columns}
+\end{frame}
+\note{这是全场最值得讲慢的一页。先说失败现象：curl 登录明明返回了 token，下一条 curl 却 401。原因不是 token 算法，而是进程地址空间。然后再给 mmap 和进程间锁。robust 是加分点，一句带过即可。如果当前环境没有进程间互斥锁，程序会退回同一块共享页上的自旋锁，数据仍然是共享的。}
+
+\begin{frame}{里程碑，以及最后多出来的两件事}
+\begin{center}
+\setlength{\fboxsep}{5pt}
+\fcolorbox{navy}{navy!8}{\begin{minipage}[c][1.45cm][c]{3.15cm}\centering\textbf{Week A}\\{\scriptsize GET /health}\\{\scriptsize 打通读写}\end{minipage}}
+\hspace{0.25em}{\color{accent}$\rightarrow$}\hspace{0.25em}
+\fcolorbox{navy}{accent!12}{\begin{minipage}[c][1.45cm][c]{3.7cm}\centering\textbf{Week B}\\{\scriptsize 登录 + 受保护的 GET}\\{\scriptsize 错误 token 返回 401}\end{minipage}}
+\hspace{0.25em}{\color{accent}$\rightarrow$}\hspace{0.25em}
+\fcolorbox{navy}{teal!14}{\begin{minipage}[c][1.45cm][c]{3.35cm}\centering\textbf{Week C}\\{\scriptsize POST 留言}\\{\scriptsize 多客户端 + 三条 curl}\end{minipage}}
+\end{center}
+\vspace{0.45em}
+提交的是 Week C 的程序，A 和 B 的路径都还在。\\
+加分：空闲读超时返回 408；\texttt{GET /api/ping} 做心跳。超时是两次 read 之间的空闲时间，默认 8 秒。
+\end{frame}
+\note{说明这三周是实现顺序，不是三份程序。如果时间够，可以把超时演示留到提问阶段：连上之后只发半截头部，不发空行，等 408。}
+
+\begin{frame}[fragile]{三条 curl}
+\begin{lstlisting}[style=plain]
+curl --http1.1 -sS -X POST http://127.0.0.1:8080/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"alice123"}'
+
+curl --http1.1 -sS -X POST http://127.0.0.1:8080/api/messages \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"..."}'
+
+curl --http1.1 -sS http://127.0.0.1:8080/api/messages \
+  -H "Authorization: Bearer $TOKEN"
+\end{lstlisting}
+\vspace{-0.15em}
+{\small 期望依次是：200 且 body 里有 \texttt{token}；201；200 且列表里有刚写的那条。\\
+\texttt{scripts/demo.sh} 会打印命令和结果，并检查状态码。}
+\end{frame}
+\note{切到终端再讲这页。左边或上面是服务器，先让老师看到 listening。然后跑 demo.sh。讲的时候指出日志里 parent 和 child 的 pid 不一样，每个连接一个进程。}
+
+\begin{frame}{并发，以及不能冒充别人}
+\begin{itemize}
+  \item alice 和 bob 各自登录，几乎同时 \texttt{POST}。两个请求落在两个子进程里
+  \item 之后任意一个 token 再 \texttt{GET}，列表里两条都在。这证明写进的是同一块共享内存
+  \item body 里写了别人的用户名也没用：token 属于 alice 时，存下来的作者仍是 alice
+  \item 不带 token 的 \texttt{POST} 得到 401，这条文字不会进列表
+\end{itemize}
+\vspace{0.55em}
+留言数组固定 64 条，写满后覆盖最旧的一条。演示用不了这么多。
+\end{frame}
+\note{并发那一下如果老师没看清，就打开服务器日志，指出两个 child pid 和两条 201。防冒充是设计选择：身份只来自 token 表，不相信客户端自己报的用户名。}
+
+\begin{frame}{可能会被问到的四件事}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.49\textwidth}
+\begin{block}{token 跨连接为什么还在？}
+{\small 表在共享映射上。普通全局变量确实会被 \texttt{fork} 复制。}
+\end{block}
+\begin{block}{为什么是 401，不是 403？}
+{\small 401 表示还没证明你是谁。这里没有「已登录但不够权限」。}
+\end{block}
+\end{column}
+\begin{column}{0.49\textwidth}
+\begin{block}{为什么先读空行？}
+{\small \texttt{send} 的边界不会保留。空行加 \texttt{Content-Length} 才是一条请求的结尾。}
+\end{block}
+\begin{block}{两种僵尸}
+{\small 子进程退出靠 \texttt{SIGCHLD}。连接迟迟不发完，靠读超时返回 408 后关掉。}
+\end{block}
+\end{column}
+\end{columns}
+\end{frame}
+\note{这页不用主动念完。提问时用对应的一块回答。如果问没做什么：没有 TLS，没有分块传输，没有长连接，密码没有哈希，重启后内存清空。这些是故意停住的范围。}
+
+\begin{frame}{现场就按这个顺序}
+\begin{enumerate}
+  \item \texttt{make \&\& ./bin/restapi 8080}
+  \item 另一个终端：\texttt{bash scripts/demo.sh}
+  \item 看服务器日志：\texttt{connection -> child}，以及每条请求的 pid 和状态码
+\end{enumerate}
+\vspace{0.7em}
+\begin{center}
+{\large 登录，发一条留言，再把列表读回来。}
+\end{center}
+\vspace{0.45em}
+{\small 换端口时：\texttt{./bin/restapi 8081}，然后 \texttt{BASE=http://127.0.0.1:8081 bash scripts/demo.sh}。}
+\end{frame}
+\note{收尾不要再加新内容。如果演示已经跑过，这页用来把命令留在屏幕上，方便老师回头看。然后停下来等提问。}
+
+\end{document}
