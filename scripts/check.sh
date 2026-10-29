@@ -49,6 +49,18 @@ if ! BASE="http://127.0.0.1:${PORT}" bash "$ROOT/scripts/demo.sh"; then
   exit 1
 fi
 
+# token 表只有 32 个位置。反复登录不能把它占满。
+for i in $(seq 1 40); do
+  code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+    -X POST "http://127.0.0.1:${PORT}/api/login" \
+    -d '{"username":"alice","password":"alice123"}')
+  if [[ "$code" != 200 ]]; then
+    printf '第 %d 次登录得到 HTTP %s，期望 200\n' "$i" "$code" >&2
+    cat "$LOG" >&2
+    exit 1
+  fi
+done
+
 if ! grep -q "connection -> child" "$LOG"; then
   printf '日志里没有 fork 记录\n' >&2
   cat "$LOG" >&2

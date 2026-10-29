@@ -6,7 +6,7 @@
 
 ## 环境
 
-Linux 或 WSL。需要 `gcc`、`make`、`curl`。Windows 上的 MinGW 没有 `fork`，不能用来编译这个服务。MSYS2 可以编译：进程间互斥锁不可用时，启动日志会出现 `process-shared mutex unavailable, using a shared spinlock`，token 和留言仍在同一块共享内存里。Linux 实验环境走进程间互斥锁，不会出现这行。
+Linux 或 WSL。需要 `gcc`、`make`、`curl`。Windows 上的 MinGW 没有 `fork`，不能用来编译这个服务。
 
 幻灯片需要 `xelatex` 和 `ctex`。
 
@@ -86,7 +86,8 @@ PORT=8080 bash scripts/timeout_demo.sh
 - TCP 没有消息边界。先 `read` 到 `\r\n\r\n`，再按 `Content-Length` 读满 body，然后才处理。
 - 重复的 `Content-Length` 直接 400。
 - 登录成功用 `sprintf` 生成 `tk_` 加 16 位十六进制。子进程会继承 `rand` 的状态，所以按 pid 重新播种。
-- 共享内存在 `mmap(MAP_SHARED)` 上。优先用 `PTHREAD_PROCESS_SHARED` 的 robust mutex，子进程若死在加锁期间，整张表不会永远锁死。平台不支持进程间互斥锁时，退回同一块共享页上的自旋锁。
+- 共享内存在 `mmap(MAP_SHARED)` 上，在 `fork` 之前建好。读写都用一把 `PTHREAD_PROCESS_SHARED` 的互斥锁保护。
+- 同一账号再次登录会换一枚新 token，旧的随之作废，所以 token 表最多只有三条记录。
 - 留言是长度 64 的循环数组，满了覆盖最旧的一条。重启后 token 和留言都消失。
 
 ## 幻灯片

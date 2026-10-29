@@ -69,16 +69,24 @@ static int token_exists(SharedState *st, const char *token)
     return 0;
 }
 
-static int find_free_slot(SharedState *st)
+/*
+ * 同一个用户重新登录时，复用他原来的位置，旧 token 随之作废。
+ * 否则表只增不减，登录满 MAX_TOKENS 次之后谁都登不上。
+ */
+static int find_slot(SharedState *st, const char *username)
 {
     int i;
+    int free_slot = -1;
 
     for (i = 0; i < MAX_TOKENS; i++) {
-        if (!st->tokens[i].used) {
+        if (st->tokens[i].used && strcmp(st->tokens[i].username, username) == 0) {
             return i;
         }
+        if (!st->tokens[i].used && free_slot < 0) {
+            free_slot = i;
+        }
     }
-    return -1;
+    return free_slot;
 }
 
 int auth_login(SharedState *st, const char *username, const char *password,
@@ -106,7 +114,7 @@ int auth_login(SharedState *st, const char *username, const char *password,
     }
 
     state_lock(st);
-    slot = find_free_slot(st);
+    slot = find_slot(st, username);
     if (slot < 0) {
         state_unlock(st);
         return AUTH_FULL;

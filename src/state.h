@@ -31,9 +31,7 @@ typedef struct {
  * 如果放在普通全局变量里，每个子进程只会改自己的副本。
  */
 typedef struct {
-    pthread_mutex_t lock;
-    int use_mutex;     /* 1：进程间互斥锁；0：下面这把自旋锁 */
-    volatile int spin; /* 共享页上的自旋锁，给不支持进程间 mutex 的平台 */
+    pthread_mutex_t lock; /* 进程间互斥锁，保护下面的 token 表和留言数组 */
     TokenSlot tokens[MAX_TOKENS];
     Message messages[MAX_MESSAGES];
     int msg_head;  /* 下一条留言写入的位置 */

@@ -84,7 +84,7 @@ static void reply_error(int fd, const HttpRequest *req, int status,
 
     n = snprintf(body, sizeof body, "{\"error\":\"%s\"}", msg);
     if (n < 0 || (size_t)n >= sizeof body) {
-        reply(fd, req, status, reason, "{\"error\":\"服务器内部错误\"}");
+        reply(fd, req, status, reason, "{\"error\":\"internal server error\"}");
         return;
     }
     reply(fd, req, status, reason, body);
@@ -123,12 +123,12 @@ static int require_user(int fd, SharedState *st, const HttpRequest *req,
     char token[TOKEN_LEN];
 
     if (!req->has_authorization) {
-        reply_error(fd, req, 401, "Unauthorized", "缺少 token");
+        reply_error(fd, req, 401, "Unauthorized", "missing token");
         return -1;
     }
     if (extract_bearer(req->authorization, token, sizeof token) != 0 ||
         auth_lookup(st, token, user, user_cap) != AUTH_OK) {
-        reply_error(fd, req, 401, "Unauthorized", "token 无效");
+        reply_error(fd, req, 401, "Unauthorized", "invalid token");
         return -1;
     }
     return 0;
@@ -149,34 +149,34 @@ static void handle_login(int fd, SharedState *st, const HttpRequest *req)
     pr = json_get_string(req->body, "password", pass, sizeof pass);
     if (ur == -2 || pr == -2) {
         memset(pass, 0, sizeof pass);
-        reply_error(fd, req, 400, "Bad Request", "字段太长");
+        reply_error(fd, req, 400, "Bad Request", "field too long");
         return;
     }
     if (ur != 0 || pr != 0) {
         memset(pass, 0, sizeof pass);
-        reply_error(fd, req, 400, "Bad Request", "请求格式不对");
+        reply_error(fd, req, 400, "Bad Request", "bad request");
         return;
     }
 
     ar = auth_login(st, user, pass, token, sizeof token);
     memset(pass, 0, sizeof pass);
     if (ar == AUTH_BAD_CREDENTIALS) {
-        reply_error(fd, req, 401, "Unauthorized", "用户名或密码错误");
+        reply_error(fd, req, 401, "Unauthorized", "invalid username or password");
         return;
     }
     if (ar == AUTH_FULL) {
-        reply_error(fd, req, 503, "Service Unavailable", "token 表已满");
+        reply_error(fd, req, 503, "Service Unavailable", "token table full");
         return;
     }
     if (ar != AUTH_OK) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
 
     n = snprintf(body, sizeof body,
                  "{\"token\":\"%s\",\"username\":\"%s\"}", token, user);
     if (n < 0 || (size_t)n >= sizeof body) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
     reply(fd, req, 200, "OK", body);
@@ -193,7 +193,7 @@ static void handle_get_messages(int fd, SharedState *st, const HttpRequest *req)
     /* 留言板是全局的。token 只证明你是谁，不按人拆成多份列表。 */
     json = store_list_json(st);
     if (!json) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
     reply(fd, req, 200, "OK", json);
@@ -216,15 +216,15 @@ static void handle_post_message(int fd, SharedState *st, const HttpRequest *req)
     }
     jr = json_get_string(req->body, "text", text, sizeof text);
     if (jr == -2) {
-        reply_error(fd, req, 400, "Bad Request", "留言太长");
+        reply_error(fd, req, 400, "Bad Request", "message too long");
         return;
     }
     if (jr != 0) {
-        reply_error(fd, req, 400, "Bad Request", "请求格式不对");
+        reply_error(fd, req, 400, "Bad Request", "bad request");
         return;
     }
     if (text[0] == '\0') {
-        reply_error(fd, req, 400, "Bad Request", "需要留言内容");
+        reply_error(fd, req, 400, "Bad Request", "message text required");
         return;
     }
     /*
@@ -232,19 +232,19 @@ static void handle_post_message(int fd, SharedState *st, const HttpRequest *req)
      * 避免拿着自己的 token 冒充别人留言。
      */
     if (store_add(st, user, text, &saved) != 0) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
     if (json_escape(saved.username, esc_user, sizeof esc_user) != 0 ||
         json_escape(saved.text, esc_text, sizeof esc_text) != 0) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
     n = snprintf(body, sizeof body,
                  "{\"ok\":true,\"username\":\"%s\",\"text\":\"%s\",\"time\":%lld}",
                  esc_user, esc_text, saved.timestamp);
     if (n < 0 || (size_t)n >= sizeof body) {
-        reply_error(fd, req, 500, "Internal Server Error", "服务器内部错误");
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
         return;
     }
     reply(fd, req, 201, "Created", body);
@@ -254,7 +254,7 @@ static void route(int fd, SharedState *st, const HttpRequest *req)
 {
     if (strcmp(req->path, "/health") == 0) {
         if (strcmp(req->method, "GET") != 0) {
-            reply_error(fd, req, 405, "Method Not Allowed", "方法不对");
+            reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
             return;
         }
         reply(fd, req, 200, "OK", "{\"ok\":true}");
@@ -262,7 +262,7 @@ static void route(int fd, SharedState *st, const HttpRequest *req)
     }
     if (strcmp(req->path, "/api/ping") == 0) {
         if (strcmp(req->method, "GET") != 0) {
-            reply_error(fd, req, 405, "Method Not Allowed", "方法不对");
+            reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
             return;
         }
         reply(fd, req, 200, "OK", "{\"pong\":true}");
@@ -270,7 +270,7 @@ static void route(int fd, SharedState *st, const HttpRequest *req)
     }
     if (strcmp(req->path, "/api/login") == 0) {
         if (strcmp(req->method, "POST") != 0) {
-            reply_error(fd, req, 405, "Method Not Allowed", "方法不对");
+            reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
             return;
         }
         handle_login(fd, st, req);
@@ -285,10 +285,10 @@ static void route(int fd, SharedState *st, const HttpRequest *req)
             handle_post_message(fd, st, req);
             return;
         }
-        reply_error(fd, req, 405, "Method Not Allowed", "方法不对");
+        reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
         return;
     }
-    reply_error(fd, req, 404, "Not Found", "没有这个路径");
+    reply_error(fd, req, 404, "Not Found", "not found");
 }
 
 static void handle_client(int fd, SharedState *st)
@@ -301,17 +301,17 @@ static void handle_client(int fd, SharedState *st)
         return;
     }
     if (rc == HTTP_READ_TIMEOUT) {
-        http_send_json(fd, 408, "Request Timeout", "{\"error\":\"读超时\"}");
+        http_send_json(fd, 408, "Request Timeout", "{\"error\":\"request timeout\"}");
         fprintf(stderr, "[pid %d] read timeout -> 408\n", (int)getpid());
         return;
     }
     if (rc == HTTP_READ_TOO_LARGE) {
-        http_send_json(fd, 413, "Payload Too Large", "{\"error\":\"请求过大\"}");
+        http_send_json(fd, 413, "Payload Too Large", "{\"error\":\"request too large\"}");
         fprintf(stderr, "[pid %d] too large -> 413\n", (int)getpid());
         return;
     }
     if (rc != HTTP_READ_OK) {
-        http_send_json(fd, 400, "Bad Request", "{\"error\":\"请求格式不对\"}");
+        http_send_json(fd, 400, "Bad Request", "{\"error\":\"bad request\"}");
         fprintf(stderr, "[pid %d] bad request -> 400\n", (int)getpid());
         return;
     }
@@ -479,7 +479,7 @@ static void accept_loop(SharedState *state)
             sigprocmask(SIG_SETMASK, &oldset, NULL);
             perror("fork");
             http_send_json(conn, 503, "Service Unavailable",
-                           "{\"error\":\"服务器忙\"}");
+                           "{\"error\":\"server busy\"}");
             close(conn);
             continue;
         }
