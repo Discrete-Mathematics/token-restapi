@@ -6,7 +6,7 @@
 
 ## 环境
 
-Linux 或 WSL。需要 `gcc`、`make`、`curl`。Windows 上的 MinGW 没有 `fork`，不能用来编译这个服务。
+Linux 或 WSL。需要 `gcc`、`make`、`curl`。Windows 上的 MinGW 没有 `fork`，不能用来编译这个服务。MSYS2 可以编译：进程间互斥锁不可用时，启动日志会出现 `process-shared mutex unavailable, using a shared spinlock`，token 和留言仍在同一块共享内存里。Linux 实验环境走进程间互斥锁，不会出现这行。
 
 幻灯片需要 `xelatex` 和 `ctex`。
 
@@ -70,7 +70,7 @@ curl --http1.1 -sS http://127.0.0.1:8080/api/messages \
 
 登录 body：`{"username":"...","password":"..."}`。留言 body：`{"text":"..."}`。作者以 token 为准，body 里的用户名不会被采纳。
 
-没带 token、token 不对、密码不对，都是 401。请求没在空闲时限内读完，返回 408 并关闭连接。只支持带 `Content-Length` 的一个请求，不支持分块传输，也不保持长连接。
+没带 token、token 不对、密码不对，都是 401。JSON 里的说明是英文，例如 `invalid username or password`。请求没在空闲时限内读完，返回 408 并关闭连接。只支持带 `Content-Length` 的一个请求，不支持分块传输，也不保持长连接。
 
 读超时演示（服务端超时要小于 20 秒）：
 
@@ -86,7 +86,7 @@ PORT=8080 bash scripts/timeout_demo.sh
 - TCP 没有消息边界。先 `read` 到 `\r\n\r\n`，再按 `Content-Length` 读满 body，然后才处理。
 - 重复的 `Content-Length` 直接 400。
 - 登录成功用 `sprintf` 生成 `tk_` 加 16 位十六进制。子进程会继承 `rand` 的状态，所以按 pid 重新播种。
-- 共享内存在 `mmap(MAP_SHARED)` 上，在 `fork` 之前建好。读写都用一把 `PTHREAD_PROCESS_SHARED` 的互斥锁保护。
+- 共享内存在 `mmap(MAP_SHARED)` 上，在 `fork` 之前建好。优先用 `PTHREAD_PROCESS_SHARED` 的 robust mutex，子进程若死在加锁期间，整张表不会永远锁死。平台不支持进程间互斥锁时，退回同一块共享页上的自旋锁。
 - 同一账号再次登录会换一枚新 token，旧的随之作废，所以 token 表最多只有三条记录。
 - 留言是长度 64 的循环数组，满了覆盖最旧的一条。重启后 token 和留言都消失。
 

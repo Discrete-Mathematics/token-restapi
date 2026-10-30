@@ -340,9 +340,10 @@ sprintf(out, "tk_%08x%08x",
 \end{columns}
 \vspace{0.25em}
 {\small \texttt{fork} 会复制 \texttt{rand} 的状态。不按 pid 重新播种的话，两个子进程可能发出同一枚 token。\\
-密码错误、用户不存在，都返回同一句「用户名或密码错误」。}
+密码错误、用户不存在，都返回同一句 \texttt{invalid username or password}。\\
+同一账号再次登录会换新 token，旧 token 再读留言得到 401。}
 \end{frame}
-\note{指着 sprintf 说这就是课设要求的随机串。salt 是极小概率撞车时再搅一次。token 表最多 32 枚，满了返回 503。没有做注销，进程退出表就没了。}
+\note{指着 sprintf 说这就是课设要求的随机串。salt 是极小概率撞车时再搅一次。同一账号再次登录复用原来的格子并作废旧 token，三个账号不会把 32 格占满。表真满了仍然返回 503。进程退出之后表就没了。}
 
 \begin{frame}[fragile]{为什么必须用共享内存}
 \begin{columns}[T,onlytextwidth]

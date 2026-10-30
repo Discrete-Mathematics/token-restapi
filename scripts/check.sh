@@ -49,6 +49,33 @@ if ! BASE="http://127.0.0.1:${PORT}" bash "$ROOT/scripts/demo.sh"; then
   exit 1
 fi
 
+# 同一账号再次登录会换发 token，旧的必须失效。
+old_body=$(curl -sS --http1.1 --max-time 5 \
+  -X POST "http://127.0.0.1:${PORT}/api/login" \
+  -d '{"username":"bob","password":"bob123"}')
+old_token=$(printf '%s\n' "$old_body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+new_body=$(curl -sS --http1.1 --max-time 5 \
+  -X POST "http://127.0.0.1:${PORT}/api/login" \
+  -d '{"username":"bob","password":"bob123"}')
+new_token=$(printf '%s\n' "$new_body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [[ -z "$old_token" || -z "$new_token" || "$old_token" == "$new_token" ]]; then
+  printf '重新登录没有换发 token\n' >&2
+  printf 'old=%s\nnew=%s\n' "$old_body" "$new_body" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
+old_code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${old_token}" \
+  "http://127.0.0.1:${PORT}/api/messages")
+new_code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${new_token}" \
+  "http://127.0.0.1:${PORT}/api/messages")
+if [[ "$old_code" != 401 || "$new_code" != 200 ]]; then
+  printf '旧 token HTTP %s（期望 401），新 token HTTP %s（期望 200）\n' "$old_code" "$new_code" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
+
 # token 表只有 32 个位置。反复登录不能把它占满。
 for i in $(seq 1 40); do
   code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
