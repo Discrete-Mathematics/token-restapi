@@ -17,7 +17,9 @@ make
 ./bin/restapi 8080
 ```
 
-第二个参数是读超时秒数，默认 8。填 `0` 表示一直等。
+第二个参数是读超时秒数，默认 8。填 `0` 表示一直等。要在仓库根目录启动，服务器按相对路径读 `web/index.html`。
+
+浏览器打开 <http://127.0.0.1:8080/> 就是网页界面：登录、看留言、发留言、登出。留言列表每 2 秒刷新一次。开两个标签页分别登录 alice 和 bob，能看到对方的留言。
 
 另开一个终端：
 
@@ -32,7 +34,14 @@ bash scripts/demo.sh
 BASE=http://127.0.0.1:8081 bash scripts/demo.sh
 ```
 
-`make check` 会在 18080 端口启动服务、跑完演示、再关掉。
+并发压测（默认 50 个客户端同时发留言，检查全部 201、一条不少、没有僵尸进程）：
+
+```bash
+bash scripts/stress.sh
+N=30 BASE=http://127.0.0.1:8081 bash scripts/stress.sh
+```
+
+`make check` 会在 18080 端口启动服务，跑完演示、登出检查和并发压测，再关掉。
 
 ## 账号
 
@@ -62,11 +71,13 @@ curl --http1.1 -sS http://127.0.0.1:8080/api/messages \
 
 | 方法 | 路径 | 鉴权 | 成功 |
 | --- | --- | --- | --- |
+| GET | `/` | 否 | 200，网页界面（`web/index.html`） |
 | GET | `/health` | 否 | 200 `{"ok":true}` |
 | GET | `/api/ping` | 否 | 200 `{"pong":true}` |
 | POST | `/api/login` | 否 | 200，body 里有 `token` |
 | GET | `/api/messages` | 是 | 200，留言列表 |
 | POST | `/api/messages` | 是 | 201，写入一条留言 |
+| POST | `/api/logout` | 是 | 200，这枚 token 作废 |
 
 登录 body：`{"username":"...","password":"..."}`。留言 body：`{"text":"..."}`。作者以 token 为准，body 里的用户名不会被采纳。
 
@@ -107,6 +118,9 @@ src/json.c      取一层 JSON 字符串
 src/auth.c      账号和 token 表
 src/store.c     留言循环数组
 src/state.c     共享内存和进程间锁
+web/index.html  网页界面，用 fetch 调上面的接口
 scripts/demo.sh 三条 curl，外加鉴权和并发检查
+scripts/stress.sh 并发压测和僵尸进程检查
+scripts/check.sh  make check：演示、登出、压测一起跑
 presentation/slides.tex
 ```

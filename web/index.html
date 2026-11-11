@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message Board</title>
+<!-- 空图标：不让浏览器再发一个 /favicon.ico 请求 -->
+<link rel="icon" href="data:,">
+<style>
+  body { margin: 0; background: #f5f3ee; color: #1f2933; font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 28px; margin: 0 0 16px; }
+  .card { background: #fff; border: 1px solid #e2ded5; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; margin: 8px 0 4px; font-weight: 600; }
+  input { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #c9c4b8; border-radius: 8px; font: inherit; }
+  button { margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 8px; background: #1f6aa5; color: #fff; font: inherit; cursor: pointer; }
+  button.secondary { background: #6b7682; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .row input { flex: 1; }
+  .row button { margin-top: 0; }
+  .error { color: #b42318; min-height: 1.5em; margin: 8px 0 0; }
+  .muted { color: #6b7682; font-size: 14px; }
+  code { font-size: 13px; background: #eef1f4; padding: 2px 6px; border-radius: 4px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 10px 0; border-top: 1px solid #eee; }
+  li:first-child { border-top: 0; }
+  .who { font-weight: 600; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Message Board</h1>
+
+  <!-- 登录界面 -->
+  <section id="login-view" class="card">
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input id="username" autocomplete="username" placeholder="alice / bob / carol" required>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Log in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </section>
+
+  <!-- 留言板界面 -->
+  <section id="board-view" hidden>
+    <div class="card">
+      <div class="row">
+        <span>Logged in as <b id="me"></b></span>
+        <button id="logout" class="secondary" type="button">Log out</button>
+      </div>
+      <p class="muted">Token: <code id="token"></code></p>
+      <form id="post-form" class="row">
+        <input id="text" maxlength="80" placeholder="Write a message" required>
+        <button type="submit">Post</button>
+      </form>
+      <p id="post-error" class="error"></p>
+    </div>
+    <div class="card">
+      <div class="row">
+        <b>Messages</b>
+        <span id="status" class="muted"></span>
+      </div>
+      <ul id="messages"></ul>
+    </div>
+  </section>
+</main>
+
+<script>
+// token 只存在这个标签页里（sessionStorage），刷新页面不会掉线，关掉标签页就没了。
+let token = sessionStorage.getItem("token") || "";
+let me = sessionStorage.getItem("user") || "";
+let timer = null;
+
+const $ = (id) => document.getElementById(id);
+
+// 所有请求都走这里：有 token 就带上 Authorization: Bearer <token>。
+async function api(method, path, body) {
+  const headers = {};
+  if (token) headers["Authorization"] = "Bearer " + token;
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* 没有 JSON body */ }
+  return { status: res.status, data };
+}
+
+function showLogin(message) {
+  token = "";
+  me = "";
+  sessionStorage.clear();
+  clearInterval(timer);
+  $("board-view").hidden = true;
+  $("login-view").hidden = false;
+  $("login-error").textContent = message || "";
+}
+
+function showBoard() {
+  $("login-view").hidden = true;
+  $("board-view").hidden = false;
+  $("me").textContent = me;
+  $("token").textContent = token;
+  loadMessages();
+  // 每 2 秒拉一次列表，别的客户端发的留言也会出现。
+  clearInterval(timer);
+  timer = setInterval(loadMessages, 2000);
+}
+
+async function loadMessages() {
+  let res;
+  try {
+    res = await api("GET", "/api/messages");
+  } catch (e) {
+    $("status").textContent = "Server unreachable";
+    return;
+  }
+  if (res.status === 401) {
+    // token 失效了：被登出，或者同一账号在别处重新登录。
+    showLogin("Your token is no longer valid. Please log in again.");
+    return;
+  }
+  const list = $("messages");
+  list.textContent = "";
+  const items = (res.data.messages || []).slice().reverse(); // 最新的在最上面
+  for (const m of items) {
+    const li = document.createElement("li");
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = m.username;
+    const when = document.createElement("span");
+    when.className = "muted";
+    when.textContent = "  " + new Date(m.time * 1000).toLocaleTimeString();
+    const text = document.createElement("div");
+    text.textContent = m.text; // textContent 不会把留言当成 HTML 执行
+    li.append(who, when, text);
+    list.append(li);
+  }
+  if (items.length === 0) {
+    list.innerHTML = '<li class="muted">No messages yet.</li>';
+  }
+  $("status").textContent = "Updated " + new Date().toLocaleTimeString();
+}
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const res = await api("POST", "/api/login", {
+    username: $("username").value.trim(),
+    password: $("password").value,
+  });
+  if (res.status !== 200) {
+    $("login-error").textContent = res.data.error || "Login failed (HTTP " + res.status + ")";
+    return;
+  }
+  token = res.data.token;
+  me = res.data.username;
+  sessionStorage.setItem("token", token);
+  sessionStorage.setItem("user", me);
+  $("password").value = "";
+  showBoard();
+});
+
+$("post-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  const res = await api("POST", "/api/messages", { text });
+  if (res.status === 401) {
+    showLogin("Your token is no longer valid. Please log in again.");
+    return;
+  }
+  if (res.status !== 201) {
+    $("post-error").textContent = res.data.error || "Post failed (HTTP " + res.status + ")";
+    return;
+  }
+  $("post-error").textContent = "";
+  $("text").value = "";
+  loadMessages();
+});
+
+$("logout").addEventListener("click", async () => {
+  await api("POST", "/api/logout");
+  showLogin("Logged out.");
+});
+
+if (token) {
+  showBoard();
+}
+</script>
+</body>
+</html>
