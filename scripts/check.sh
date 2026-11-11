@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# 服务器按相对路径找 web/index.html，所以从仓库根目录启动。
+cd "$ROOT"
 PORT=${PORT:-18080}
 BIN="$ROOT/bin/restapi"
 LOG=$(mktemp)
@@ -87,6 +89,38 @@ for i in $(seq 1 40); do
     exit 1
   fi
 done
+
+# 网页界面：GET / 要返回 HTML。
+page_type=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' \
+  "http://127.0.0.1:${PORT}/")
+if [[ "$page_type" != "200 text/html"* ]]; then
+  printf 'GET / 得到 %s，期望 200 text/html\n' "$page_type" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
+
+# 登出：登出后 token 失效，再登出一次也是 401。
+body=$(curl -sS --http1.1 --max-time 5 -X POST "http://127.0.0.1:${PORT}/api/login" \
+  -d '{"username":"carol","password":"carol123"}')
+token=$(printf '%s\n' "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+out_code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+  -X POST -H "Authorization: Bearer ${token}" "http://127.0.0.1:${PORT}/api/logout")
+after_code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${token}" "http://127.0.0.1:${PORT}/api/messages")
+again_code=$(curl -s --http1.1 --max-time 5 -o /dev/null -w '%{http_code}' \
+  -X POST -H "Authorization: Bearer ${token}" "http://127.0.0.1:${PORT}/api/logout")
+if [[ -z "$token" || "$out_code" != 200 || "$after_code" != 401 || "$again_code" != 401 ]]; then
+  printf '登出 HTTP %s（期望 200），之后读留言 %s（期望 401），再登出 %s（期望 401）\n' \
+    "$out_code" "$after_code" "$again_code" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
+
+# 并发压测，顺带检查有没有僵尸进程。
+if ! SERVER_PID="$PID" BASE="http://127.0.0.1:${PORT}" bash "$ROOT/scripts/stress.sh"; then
+  cat "$LOG" >&2
+  exit 1
+fi
 
 if ! grep -q "connection -> child" "$LOG"; then
   printf '日志里没有 fork 记录\n' >&2

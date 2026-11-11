@@ -158,3 +158,23 @@ int auth_lookup(SharedState *st, const char *token, char *user_out, size_t user_
     state_unlock(st);
     return AUTH_BAD_TOKEN;
 }
+
+int auth_logout(SharedState *st, const char *token)
+{
+    int i;
+
+    if (!st || !token || token[0] == '\0') {
+        return AUTH_BAD_TOKEN;
+    }
+
+    state_lock(st);
+    for (i = 0; i < MAX_TOKENS; i++) {
+        if (st->tokens[i].used && strcmp(st->tokens[i].token, token) == 0) {
+            memset(&st->tokens[i], 0, sizeof st->tokens[i]);
+            state_unlock(st);
+            return AUTH_OK;
+        }
+    }
+    state_unlock(st);
+    return AUTH_BAD_TOKEN;
+}

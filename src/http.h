@@ -1,6 +1,8 @@
 #ifndef HTTP_H
 #define HTTP_H
 
+#include <stddef.h>
+
 #define HTTP_MAX_METHOD 16
 #define HTTP_MAX_PATH 256
 #define HTTP_MAX_AUTH 128
@@ -28,7 +30,11 @@ typedef struct {
 /* 把一条 HTTP/1.x 请求从字节流里切出来。调用前可先设置读超时。 */
 int http_read_request(int fd, HttpRequest *req);
 
-/* 按固定模板写 JSON 响应。成功返回 0。 */
+/* 按固定模板写响应：状态行、Content-Type、Content-Length、空行、body。成功返回 0。 */
+int http_send(int fd, int status, const char *reason, const char *content_type,
+              const char *body, size_t body_len);
+
+/* http_send 的 JSON 版本。成功返回 0。 */
 int http_send_json(int fd, int status, const char *reason, const char *json);
 
 #endif

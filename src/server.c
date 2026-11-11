@@ -22,6 +22,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdint.h>
@@ -32,6 +33,10 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* 网页界面。路径相对于启动目录，所以要在仓库根目录运行 ./bin/restapi。 */
+#define PAGE_PATH "web/index.html"
+#define PAGE_MAX (64 * 1024)
 
 static volatile sig_atomic_t listen_fd = -1;
 static volatile sig_atomic_t stop_flag = 0;
@@ -250,8 +255,83 @@ static void handle_post_message(int fd, SharedState *st, const HttpRequest *req)
     reply(fd, req, 201, "Created", body);
 }
 
+static void handle_logout(int fd, SharedState *st, const HttpRequest *req)
+{
+    char token[TOKEN_LEN];
+
+    if (!req->has_authorization) {
+        reply_error(fd, req, 401, "Unauthorized", "missing token");
+        return;
+    }
+    if (extract_bearer(req->authorization, token, sizeof token) != 0 ||
+        auth_logout(st, token) != AUTH_OK) {
+        reply_error(fd, req, 401, "Unauthorized", "invalid token");
+        return;
+    }
+    reply(fd, req, 200, "OK", "{\"ok\":true}");
+}
+
+/*
+ * 把 web/index.html 整个读进内存，再按同一个响应模板发出去，
+ * 只是 Content-Type 换成 text/html。网页和接口同源，浏览器不需要跨域设置。
+ */
+static void serve_page(int fd, const HttpRequest *req)
+{
+    char *page;
+    size_t len = 0;
+    int file;
+
+    file = open(PAGE_PATH, O_RDONLY);
+    if (file < 0) {
+        reply_error(fd, req, 500, "Internal Server Error", "web/index.html not found");
+        return;
+    }
+    page = malloc(PAGE_MAX);
+    if (!page) {
+        close(file);
+        reply_error(fd, req, 500, "Internal Server Error", "internal server error");
+        return;
+    }
+    for (;;) {
+        ssize_t n = read(file, page + len, PAGE_MAX - len);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            break;
+        }
+        len += (size_t)n;
+        if (len == PAGE_MAX) {
+            break;
+        }
+    }
+    close(file);
+
+    if (http_send(fd, 200, "OK", "text/html; charset=utf-8", page, len) != 0) {
+        fprintf(stderr, "[pid %d] send failed\n", (int)getpid());
+    }
+    log_status(req, 200);
+    free(page);
+}
+
 static void route(int fd, SharedState *st, const HttpRequest *req)
 {
+    if (strcmp(req->path, "/") == 0 || strcmp(req->path, "/index.html") == 0) {
+        if (strcmp(req->method, "GET") != 0) {
+            reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
+            return;
+        }
+        serve_page(fd, req);
+        return;
+    }
+    if (strcmp(req->path, "/api/logout") == 0) {
+        if (strcmp(req->method, "POST") != 0) {
+            reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");
+            return;
+        }
+        handle_logout(fd, st, req);
+        return;
+    }
     if (strcmp(req->path, "/health") == 0) {
         if (strcmp(req->method, "GET") != 0) {
             reply_error(fd, req, 405, "Method Not Allowed", "method not allowed");

@@ -29,16 +29,15 @@ static int write_all(int fd, const char *buf, size_t len)
     return 0;
 }
 
-int http_send_json(int fd, int status, const char *reason, const char *json)
+int http_send(int fd, int status, const char *reason, const char *content_type,
+              const char *body, size_t body_len)
 {
     char header[512];
-    size_t body_len;
     int n;
 
-    if (!reason || !json) {
+    if (!reason || !content_type || !body) {
         return -1;
     }
-    body_len = strlen(json);
     /*
      * 课设要求的响应模板是状态行、Content-Type、Content-Length、空行、body。
      * 多加 Connection: close，因为一个连接只处理一个请求。
@@ -46,18 +45,26 @@ int http_send_json(int fd, int status, const char *reason, const char *json)
      */
     n = snprintf(header, sizeof header,
                  "HTTP/1.1 %d %s\r\n"
-                 "Content-Type: application/json\r\n"
+                 "Content-Type: %s\r\n"
                  "Content-Length: %zu\r\n"
                  "Connection: close\r\n"
                  "\r\n",
-                 status, reason, body_len);
+                 status, reason, content_type, body_len);
     if (n < 0 || (size_t)n >= sizeof header) {
         return -1;
     }
     if (write_all(fd, header, (size_t)n) != 0) {
         return -1;
     }
-    return write_all(fd, json, body_len);
+    return write_all(fd, body, body_len);
+}
+
+int http_send_json(int fd, int status, const char *reason, const char *json)
+{
+    if (!json) {
+        return -1;
+    }
+    return http_send(fd, status, reason, "application/json", json, strlen(json));
 }
 
 static int next_line(const char *base, size_t end, size_t *cursor,
